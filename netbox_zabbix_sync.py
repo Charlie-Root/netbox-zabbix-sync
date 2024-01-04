@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Netbox to Zabbix sync script."""
 
+
 from os import environ, path, sys
 import logging
 import argparse
@@ -9,8 +10,9 @@ from pyzabbix import ZabbixAPI, ZabbixAPIException
 try:
     from config import *
 except ModuleNotFoundError:
-    print(f"Configuration file config.py not found in main directory."
-           "Please create the file or rename the config.py.example file to config.py.")
+    print(
+        'Configuration file config.py not found in main directory.Please create the file or rename the config.py.example file to config.py.'
+    )
     sys.exit(0)
 
 # Set logging
@@ -52,13 +54,12 @@ def main(arguments):
     # Set Netbox API
     netbox = api(netbox_host, token=netbox_token, threading=True)
     # Check if the provided Hostgroup layout is valid
-    if(arguments.layout):
+    if arguments.layout:
         hg_objects = arguments.layout.split("/")
         allowed_objects = ["site", "manufacturer", "tenant", "dev_role"]
         # Create API call to get all custom fields which are on the device objects
         device_cfs = netbox.extras.custom_fields.filter(type="text", content_type_id=23)
-        for cf in device_cfs:
-            allowed_objects.append(cf.name)
+        allowed_objects.extend(cf.name for cf in device_cfs)
         for object in hg_objects:
             if(object not in allowed_objects):
                 e = (f"Hostgroup item {object} is not valid. Make sure you"
@@ -233,20 +234,15 @@ class NetworkDevice():
             if(self.hostgroup):
                 self.hostgroup += "/"
             # Check if the item is not a standard item, A.K.A. custom field name
-            if(item not in hostgroup_vars):
+            if (item not in hostgroup_vars):
                 # check if the item is in the custom fields
-                if(item in self.nb.custom_fields):
-                    cf_value = self.nb.custom_fields[item]
-                    # check if the CF is empty.
-                    if(not cf_value):
+                if (item in self.nb.custom_fields):
+                    if cf_value := self.nb.custom_fields[item]:
+                        self.hostgroup += cf_value
+                    else:
                         # Remove the previously inserted /
                         self.hostgroup = self.hostgroup[:-1]
-                        continue
-                    else:
-                        self.hostgroup += cf_value
-                        continue
-                else:
-                    continue
+                continue
             # Check if the variable (such as Tenant) is empty
             if(not hostgroup_vars[item]):
                 continue
@@ -284,17 +280,15 @@ class NetworkDevice():
     def get_templates_cf(self):
         # Get Zabbix templates from the device type
         device_type_cfs = self.nb.device_type.custom_fields
-        # Check if the ZBX Template CF is present
-        if(template_cf in device_type_cfs):
+        if (template_cf in device_type_cfs):
             # Set value to template
             return [device_type_cfs[template_cf]]
-        else:
-            # Custom field not found, return error
-            e = (f"Custom field {template_cf} not "
-                f"found for {self.nb.device_type.manufacturer.name}"
-                f" - {self.nb.device_type.display}.")
-            
-            raise TemplateError(e)
+        # Custom field not found, return error
+        e = (f"Custom field {template_cf} not "
+            f"found for {self.nb.device_type.manufacturer.name}"
+            f" - {self.nb.device_type.display}.")
+
+        raise TemplateError(e)
 
     def get_templates_context(self):
         # Get Zabbix templates from the device context
@@ -312,10 +306,7 @@ class NetworkDevice():
         """
         Checks if device is part of cluster.
         """
-        if(self.nb.virtual_chassis):
-            return True
-        else:
-            return False
+        return bool(self.nb.virtual_chassis)
 
     def getClusterMaster(self):
         """
@@ -428,11 +419,9 @@ class NetworkDevice():
         """
         Checks if hostname exists in Zabbix.
         """
-        host = self.zabbix.host.get(filter={'name': self.name}, output=[])
-        if(host):
-            return True
-        else:
-            return False
+        return bool(
+            host := self.zabbix.host.get(filter={'name': self.name}, output=[])
+        )
 
     def setInterfaceDetails(self):
         """
@@ -458,20 +447,21 @@ class NetworkDevice():
 
     def setProxy(self, proxy_list):
         # check if Zabbix Proxy has been defined in config context
-        if("zabbix" in self.nb.config_context):
-            if("proxy" in self.nb.config_context["zabbix"]):
-                proxy = self.nb.config_context["zabbix"]["proxy"]
-                # Try matching proxy
-                for px in proxy_list:
-                    if(px["host"] == proxy):
-                        self.zbxproxy = px["proxyid"]
-                        logger.debug(f"Found proxy {proxy}"
-                                     f" for {self.name}.")
-                        return True
-                else:
-                    e = f"{self.name}: Defined proxy {proxy} not found."
-                    logger.warning(e)
-                    return False
+        if "zabbix" not in self.nb.config_context:
+            return
+        if("proxy" in self.nb.config_context["zabbix"]):
+            proxy = self.nb.config_context["zabbix"]["proxy"]
+            # Try matching proxy
+            for px in proxy_list:
+                if(px["host"] == proxy):
+                    self.zbxproxy = px["proxyid"]
+                    logger.debug(f"Found proxy {proxy}"
+                                 f" for {self.name}.")
+                    return True
+            else:
+                e = f"{self.name}: Defined proxy {proxy} not found."
+                logger.warning(e)
+                return False
 
     def createInZabbix(self, groups, templates, proxys,
                        description="Host added by Netbox sync script."):
@@ -521,8 +511,7 @@ class NetworkDevice():
             groupid = self.zabbix.hostgroup.create(name=self.hostgroup)
             e = f"Added hostgroup '{self.hostgroup}'."
             logger.info(e)
-            data = {'groupid': groupid["groupids"][0], 'name': self.hostgroup}
-            return data
+            return {'groupid': groupid["groupids"][0], 'name': self.hostgroup}
         except ZabbixAPIException as e:
             e = f"Couldn't add hostgroup, Zabbix returned {str(e)}."
             logger.error(e)
@@ -540,7 +529,9 @@ class NetworkDevice():
             logger.error(e)
             raise SyncExternalError(e)
         logger.info(f"Updated host {self.name} with data {kwargs}.")
-        self.create_journal_entry("info", f"Updated host in Zabbix with latest NB data.")
+        self.create_journal_entry(
+            "info", "Updated host in Zabbix with latest NB data."
+        )
 
     def ConsistencyCheck(self, groups, templates, proxys, proxy_power):
         """
@@ -575,7 +566,7 @@ class NetworkDevice():
             logger.warning(f"Device {self.name}: hostname OUT of sync. "
                            f"Received value: {host['host']}")
             self.updateZabbixHost(host=self.name)
-        
+
         # Check if the templates are in-sync
         if(not self.zbx_template_comparer(host["parentTemplates"])):
             logger.warning(f"Device {self.name}: template(s) OUT of sync.")
@@ -599,16 +590,8 @@ class NetworkDevice():
             self.updateZabbixHost(status=str(self.zabbix_state))
 
         # Check if a proxy has been defined
-        if(self.zbxproxy != "0"):
-            # Check if expected proxyID matches with configured proxy
-            if(host["proxy_hostid"] == self.zbxproxy):
-                logger.debug(f"Device {self.name}: proxy in-sync.")
-            else:
-                # Proxy diff, update value
-                logger.warning(f"Device {self.name}: proxy OUT of sync.")
-                self.updateZabbixHost(proxy_hostid=self.zbxproxy)
-        else:
-            if(not host["proxy_hostid"] == "0"):
+        if self.zbxproxy == "0":
+            if host["proxy_hostid"] != "0":
                 if(proxy_power):
                     # If the -p flag has been issued,
                     # delete the proxy link in Zabbix
@@ -621,6 +604,12 @@ class NetworkDevice():
                                  f"with proxy in Zabbix but not in Netbox. The"
                                  " -p flag was ommited: no "
                                  "changes have been made.")
+        elif (host["proxy_hostid"] == self.zbxproxy):
+            logger.debug(f"Device {self.name}: proxy in-sync.")
+        else:
+            # Proxy diff, update value
+            logger.warning(f"Device {self.name}: proxy OUT of sync.")
+            self.updateZabbixHost(proxy_hostid=self.zbxproxy)
         # If only 1 interface has been found
         if(len(host['interfaces']) == 1):
             updates = {}
@@ -688,7 +677,7 @@ class NetworkDevice():
     def create_journal_entry(self, severity, message):
         # Send a new Journal entry to Netbox. Usefull for viewing actions
         # in Netbox without having to look in Zabbix or the script log output
-        if(self.journal):
+        if self.journal:
             # Check if the severity is valid
             if severity not in ["info", "success", "warning", "danger"]:
                 logger.warning(f"Value {severity} not valid for NB journal entries.")
@@ -701,7 +690,6 @@ class NetworkDevice():
             try:
                 self.nb_journals.create(journal)
                 return True
-                logger.debug(f"Crated journal entry in NB for host {self.name}")
             except pynetbox.RequestError as e:
                 logger.warning("Unable to create journal entry for "
                                f"{self.name}: NB returned {e}")
@@ -727,13 +715,10 @@ class NetworkDevice():
                     succesfull_templates.append(nb_tmpl)
                     logger.debug(f"Device {self.name}: template {nb_tmpl['name']} is present in Zabbix.")
                     break
-        if(len(succesfull_templates) == len(self.zbx_templates) and
-           len(tmpls_from_zabbix) == 0):
-            # All of the Netbox templates have been confirmed as successfull
-            # and the ZBX template list is empty. This means that
-            # all of the templates match.
-            return True
-        return False
+        return (
+            len(succesfull_templates) == len(self.zbx_templates)
+            and len(tmpls_from_zabbix) == 0
+        )
 
 
 
@@ -748,60 +733,44 @@ class ZabbixInterface():
         self.interface = self.skelet
 
     def get_context(self):
-        # check if Netbox custom context has been defined.
-        if("zabbix" in self.context):
-            zabbix = self.context["zabbix"]
-            if("interface_type" in zabbix and "interface_port" in zabbix):
-                self.interface["type"] = zabbix["interface_type"]
-                self.interface["port"] = zabbix["interface_port"]
-                return True
-            else:
-                return False
+        if "zabbix" not in self.context:
+            return False
+        zabbix = self.context["zabbix"]
+        if("interface_type" in zabbix and "interface_port" in zabbix):
+            self.interface["type"] = zabbix["interface_type"]
+            self.interface["port"] = zabbix["interface_port"]
+            return True
         else:
             return False
 
     def set_snmp(self):
         # Check if interface is type SNMP
-        if(self.interface["type"] == 2):
-            # Checks if SNMP settings are defined in Netbox
-            if("snmp" in self.context["zabbix"]):
-                snmp = self.context["zabbix"]["snmp"]
-                self.interface["details"] = {}
-                # Checks if bulk config has been defined
-                if("bulk" in snmp):
-                    self.interface["details"]["bulk"] = str(snmp.pop("bulk"))
-                else:
-                    # Fallback to bulk enabled if not specified
-                    self.interface["details"]["bulk"] = "1"
-                # SNMP Version config is required in Netbox config context
-                if(snmp.get("version")):
-                    self.interface["details"]["version"] = str(snmp.pop("version"))
-                else:
-                    e = "SNMP version option is not defined."
-                    raise InterfaceConfigError(e)
-                # If version 1 or 2 is used, get community string
-                if(self.interface["details"]["version"] in ['1','2']):
-                    if("community" in snmp):
-                        # Set SNMP community to confix context value
-                        community = snmp["community"]
-                    else:
-                        # Set SNMP community to default
-                        community = "{$SNMP_COMMUNITY}"
-                    self.interface["details"]["community"] = str(community)
-                # If version 3 has been used, get all
-                # SNMPv3 Netbox related configs
-                elif(self.interface["details"]["version"] == '3'):
-                    items = ["securityname", "securitylevel", "authpassphrase",
-                             "privpassphrase", "authprotocol", "privprotocol",
-                             "contextname"]
-                    for key, item in snmp.items():
-                        if(key in items):
-                            self.interface["details"][key] = str(item)
-                else:
-                    e = "Unsupported SNMP version."
-                    raise InterfaceConfigError(e)
+        if (self.interface["type"] == 2):
+            if "snmp" not in self.context["zabbix"]:
+                raise InterfaceConfigError("Interface type SNMP but no parameters provided.")
+            snmp = self.context["zabbix"]["snmp"]
+            self.interface["details"] = {
+                "bulk": str(snmp.pop("bulk")) if ("bulk" in snmp) else "1"
+            }
+            # SNMP Version config is required in Netbox config context
+            if(snmp.get("version")):
+                self.interface["details"]["version"] = str(snmp.pop("version"))
             else:
-                e = "Interface type SNMP but no parameters provided."
+                e = "SNMP version option is not defined."
+                raise InterfaceConfigError(e)
+                # If version 1 or 2 is used, get community string
+            if (self.interface["details"]["version"] in ['1','2']):
+                community = snmp["community"] if ("community" in snmp) else "{$SNMP_COMMUNITY}"
+                self.interface["details"]["community"] = str(community)
+            elif(self.interface["details"]["version"] == '3'):
+                items = ["securityname", "securitylevel", "authpassphrase",
+                         "privpassphrase", "authprotocol", "privprotocol",
+                         "contextname"]
+                for key, item in snmp.items():
+                    if(key in items):
+                        self.interface["details"][key] = str(item)
+            else:
+                e = "Unsupported SNMP version."
                 raise InterfaceConfigError(e)
         else:
             e = "Interface type is not SNMP, unable to set SNMP details"
